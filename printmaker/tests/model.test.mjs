@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { emptyWorksheet, newQuestion, parseWorksheet, moonwordsQuestions, isSafeImage } from '../src/model.ts';
+test('blank and valid worksheets round-trip',()=>{const doc={...emptyWorksheet(),title:'검증',questions:[newQuestion({text:'Question',answer:'Answer'})]};assert.deepEqual(parseWorksheet(JSON.parse(JSON.stringify(doc))),doc);});
+test('reject duplicate IDs',()=>{const q=newQuestion();assert.throws(()=>parseWorksheet({...emptyWorksheet(),questions:[q,q]}));});
+test('reject scripts and remote figure URLs',()=>{assert.equal(isSafeImage('javascript:alert(1)'),false);assert.equal(isSafeImage('https://example.com/tracker.png'),false);assert.equal(isSafeImage('data:image/svg+xml;base64,AAAA'),false);});
+test('reject unsafe or oversized font settings',()=>{assert.throws(()=>parseWorksheet({...emptyWorksheet(),fontSize:0}));assert.throws(()=>parseWorksheet({...emptyWorksheet(),fontSize:100}));});
+test('enforce 100 question limit',()=>{assert.throws(()=>parseWorksheet({...emptyWorksheet(),questions:Array.from({length:101},()=>newQuestion())}));});
+test('Moonwords source stays unchanged and 0-based answers convert correctly',()=>{const original={id:'doc',title:'English',original_text:'Reading passage',analysis:{questions:[{question:'Why?',options:['one','two'],answer:1,explanation:'Because'}]}};const before=JSON.stringify(original);const result=moonwordsQuestions(original);assert.equal(result[0].answer,'2. two');assert.equal(result[0].reviewed,false);assert.equal(result[0].origin,'moonwords');assert.equal(JSON.stringify(original),before);});
+test('Moonwords document without questions imports passage',()=>{assert.equal(moonwordsQuestions({id:'doc',title:'Source',original_text:'Passage'})[0].text,'Passage');});
+test('AI answers are unreviewed by default',()=>{assert.equal(newQuestion({answerSource:'ai',answer:'draft'}).reviewed,false);});

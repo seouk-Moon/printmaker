@@ -1,0 +1,16 @@
+{
+  "name": "printmaker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "build:pages": "npm run build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+  },
+  "dependencies": { "@supabase/supabase-js": "2.57.4", "pdfjs-dist": "5.4.149", "react": "19.2.6", "react-dom": "19.2.6", "pdf-lib": "1.17.1", "@pdf-lib/fontkit": "1.1.1", "docx": "9.5.1" },
+  "devDependencies": { "@types/node": "22.19.19", "@types/react": "19.2.14", "@types/react-dom": "19.2.3", "@vitejs/plugin-react": "6.0.2", "typescript": "5.9.3", "vite": "8.0.13" }
+}
