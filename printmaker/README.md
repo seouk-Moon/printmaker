@@ -45,8 +45,8 @@ Settings → Pages → Source를 **GitHub Actions**로 선택합니다. 포함�
 2. `supabase/functions/printmaker-ai/index.ts`의 전체 코드를 넣고 Deploy.
 3. 함수 설정에서 **Verify JWT with legacy secret**을 끕니다. 코드는 요청마다 `auth.getUser()`로 실제 사용자를 검증하므로 익명 AI 호출은 허용되지 않습니다. 새로운 publishable key 환경과의 호환을 위한 설정입니다.
 4. 기존 `GEMINI_API_KEY` Secret을 공동 사용합니다.
-5. `PRINTMAKER_GEMINI_MODEL`에는 Google AI Studio에서 사용 가능한 이미지 입력 지원 모델 ID를 넣습니다. 미설정이면 기존 `GEMINI_MODEL` 값을 사용합니다. 둘 다 없으면 오류로 안내합니다. 모델 지원 여부는 계정과 시점에 따라 다르므로 앱에 고정하지 않았습니다.
-6. 선택 사항: `PRINTMAKER_FALLBACK_MODELS`에 대체 모델 ID를 쉼표로 구분해 넣습니다. 429/503/일시 장애에는 지수 간격 재시도(총 최대 3회)를 합니다.
+5. `PRINTMAKER_GEMINI_MODEL`은 선택 사항입니다. **이미지 입력 + 구조화 출력(JSON Schema)** 을 모두 지원하는 일반 모델 ID를 사용하세요. 기본값은 `gemini-2.5-flash`입니다. 현재 기준 `gemini-3.6-flash` 같은 일반 Flash 모델도 사용할 수 있습니다. `gemini-2.5-flash-image`, `gemini-3.1-flash-image`처럼 이름에 `-image`가 붙은 이미지 생성 모델은 이 함수의 JSON 구조화 출력과 맞지 않으므로 사용하지 마세요. `models/gemini-...` 형태를 넣어도 자동으로 정규화합니다.
+6. 선택 사항: `PRINTMAKER_FALLBACK_MODELS`에 대체 **일반** 모델 ID를 쉼표로 구분해 넣습니다. 429/503/일시 장애에는 재시도하며, 모델 미지원/모델 없음 오류는 대체 모델로 한 번 전환합니다. `GEMINI_MODEL`은 호환되는 값일 때만 후순위 후보로 사용됩니다. Google의 실제 오류 메시지도 키를 가린 뒤 관리자 진단용으로 반영합니다.
 
 CLI 사용자만:
 
