@@ -134,7 +134,7 @@ export default function App() {
           </>}
         </aside>
       </fieldset>
-      <footer className="footer"><span>Printmaker · Moonwords와 함께하는 학습 도구</span><span>사용 권한이 있는 자료만 올려 주세요. AI 추출·답안은 검토가 필요합니다.</span></footer>
+      <footer className="footer"><div className="footer-brand"><b>Printmaker</b><small>MOON · WORKSHEET</small></div><span>MoonWords와 같은 학습 도구 모음</span><span>사용 권한이 있는 자료만 올려 주세요. AI 추출·답안은 검토가 필요합니다.</span></footer>
     </main>
     {preview&&<div className="preview-overlay" role="dialog" aria-modal="true" aria-label="합본 PDF 미리보기"><div className="row between"><b>합본 PDF 미리보기</b><button autoFocus onClick={()=>{URL.revokeObjectURL(previewRef.current);previewRef.current="";setPreview("");}}>닫기 ×</button></div><iframe src={preview} title="학습지 PDF"/></div>}
   </div>;
