@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { aiRequest, moonwordsUrl, saveCloud, sendToMoonwords, supabase } from "./cloud";
-import { emptyWorksheet, moonwordsQuestions, newQuestion, parseWorksheet } from "./model";
-import type { Message, Question, SourcePage, Worksheet } from "./model";
+import { emptyWorksheet, moonwordsQuestions, newQuestion, parseWorksheet, isSourceBox } from "./model";
+import type { Figure, Message, Question, SourcePage, Worksheet } from "./model";
 import { Cropper } from "./Cropper";
 import type { OutputKind } from "./export";
+const WorksheetReview = lazy(() => import("./WorksheetReview").then(module => ({ default: module.WorksheetReview })));
+import { mergeSourcePages } from "./source-review";
+import { useReviewHistory } from "./useReviewHistory";
 
 type AnswerCandidate={label:string;answer:string;explanation:string};
 const originLabels={original:"원본 추출",variant:"AI 변형",moonwords:"Moonwords",manual:"직접 편집"};
@@ -15,7 +18,7 @@ export default function App() {
   const [doc,setDoc]=useState<Worksheet>(emptyWorksheet);
   const [selectedId,setSelectedId]=useState("");
   const selected=doc.questions.find(q=>q.id===selectedId);
-  const [source,setSource]=useState<SourcePage[]>([]);const [pageIndex,setPageIndex]=useState(0);
+  const [source,setSource]=useState<SourcePage[]>([]);const [sourceArchive,setSourceArchive]=useState<SourcePage[]>([]);const [pageIndex,setPageIndex]=useState(0);
   const page=source[pageIndex];const [processed,setProcessed]=useState<number[]>([]);
   const [busy,setBusy]=useState("");const [message,setMessage]=useState("");const [error,setError]=useState("");
   const [consent,setConsent]=useState(false);const [sourceRole,setSourceRole]=useState<"extract"|"answers">("extract");
@@ -26,13 +29,14 @@ export default function App() {
   const [chatInput,setChatInput]=useState("");const [chats,setChats]=useState<Record<string,Message[]>>({});
   const [cloudId,setCloudId]=useState<string|undefined>();const [saved,setSaved]=useState<{id:string;title:string}[]>([]);
   const [moonDocs,setMoonDocs]=useState<Parameters<typeof moonwordsQuestions>[0][]>([]);
-  const [preview,setPreview]=useState("");const previewRef=useRef("");
+  const review=useReviewHistory(doc.questions.map(q=>q.id));
+  const openReview=(questionId=selectedId||doc.questions[0]?.id||"",figureId:string|null=null,source=false)=>review.open({questionId,figureId,source});
   const dirty=useRef(false);const fileRef=useRef<HTMLInputElement>(null);
   const messages=chats[selectedId]||[initialChat];
 
   useEffect(()=>{if(!supabase)return;let active=true;let userId:string|undefined;const applySession=(s:Session|null)=>{if(!active)return;if(userId!==s?.user.id){setSaved([]);setMoonDocs([]);setCloudId(undefined);userId=s?.user.id;}setSession(s);};void supabase.auth.getSession().then(({data})=>applySession(data.session));const {data}=supabase.auth.onAuthStateChange((_e,s)=>applySession(s));return ()=>{active=false;data.subscription.unsubscribe();};},[]);
-  useEffect(()=>{const leave=(event:BeforeUnloadEvent)=>{if(dirty.current){event.preventDefault();event.returnValue="";}};window.addEventListener("beforeunload",leave);return ()=>{window.removeEventListener("beforeunload",leave);if(previewRef.current)URL.revokeObjectURL(previewRef.current);};},[]);
-  const update=(next:Worksheet|((old:Worksheet)=>Worksheet))=>{dirty.current=true;setDoc(next);if(previewRef.current){URL.revokeObjectURL(previewRef.current);previewRef.current="";setPreview("");}};
+  useEffect(()=>{const leave=(event:BeforeUnloadEvent)=>{if(dirty.current){event.preventDefault();event.returnValue="";}};window.addEventListener("beforeunload",leave);return ()=>{window.removeEventListener("beforeunload",leave);};},[]);
+  const update=(next:Worksheet|((old:Worksheet)=>Worksheet))=>{dirty.current=true;setDoc(next);};
   const patchQuestion=(patch:Partial<Question>)=>update(old=>({...old,questions:old.questions.map(q=>q.id===selectedId?{...q,...patch}:q)}));
   const append=(questions:Question[])=>{
     if(doc.questions.length+questions.length>100)throw new Error("한 학습지는 최대 100문제입니다. 학습지를 나눠 주세요.");
@@ -40,7 +44,15 @@ export default function App() {
   };
   const run=async(label:string,fn:()=>Promise<void>)=>{if(busy)return;setBusy(label);setError("");setMessage("");try{await fn();}catch(e){setError(e instanceof Error?e.message:"처리 중 오류가 발생했습니다.");}finally{setBusy("");}};
   const requireAi=()=>{if(!consent)throw new Error("AI 전송 동의에 체크해 주세요. 선택한 원본과 문제만 전송합니다.");if(!session)throw new Error("상단에서 Moonwords 계정으로 로그인해 주세요.");};
-  const loadFile=(file:File)=>run("파일 읽는 중",async()=>{const {readSource}=await import("./extract");const pages=await readSource(file,setBusy);setSource(pages);setPageIndex(0);setProcessed([]);setMessage(`${pages.length}페이지를 읽었습니다. 텍스트·그림을 직접 넣거나 AI로 문제를 분리하세요.`);});
+  const loadFile=(file:File)=>run("파일 읽는 중",async()=>{
+    const {readSource}=await import("./extract");const raw=await readSource(file,setBusy);
+    const digest=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());
+    const hash=[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,"0")).join("");
+    const pages=raw.map(page=>({...page,id:`${hash}:${page.number}`}));
+    const archive=mergeSourcePages(sourceArchive,pages);
+    setSourceArchive(archive);setSource(pages);setPageIndex(0);setProcessed([]);
+    setMessage(`${pages.length}페이지를 읽었습니다. 최종본 확인에서 이 원본으로 돌아가 그림을 수정할 수 있어요.`);
+  });
   const extractPage=()=>run("텍스트·그림 추출 중",async()=>{
     requireAi();if(!page)throw new Error("파일을 먼저 올려 주세요.");
     if(processed.includes(pageIndex))throw new Error("이미 추출한 페이지입니다. 다음 페이지를 선택해 주세요.");
@@ -51,9 +63,9 @@ export default function App() {
       const {cropFigure}=await import("./extract");
       const questions:Question[]=[];
       for(const item of data.questions) {
-        const figures=[];
-        for(const box of item.boxes||[]) if(page.image)figures.push({id:crypto.randomUUID(),dataUrl:await cropFigure(page.image,box),caption:""});
-        questions.push(newQuestion({label:item.label,text:item.text,answer:item.answer,explanation:item.explanation,origin:"original",answerSource:item.answer?"source":"none",sourceName:page.name,sourcePage:page.number,figures}));
+        const figures:Figure[]=[];
+        for(const box of item.boxes||[]) if(page.image)figures.push({id:crypto.randomUUID(),dataUrl:await cropFigure(page.image,box),caption:"",sourceId:page.id,sourceName:page.name,sourcePage:page.number,sourceBox:isSourceBox(box)?box:undefined});
+        questions.push(newQuestion({label:item.label,text:item.text,answer:item.answer,explanation:item.explanation,origin:"original",answerSource:item.answer?"source":"none",sourceName:page.name,sourcePage:page.number,sourceId:page.id,sourceBox:isSourceBox(item.questionBox)?item.questionBox:undefined,figures}));
       }
       append(questions);setMessage(`${questions.length}문제를 추출했습니다. 원본과 비교해 누락·그림 영역을 확인하세요. ${data.message||""}`);
     }
@@ -64,7 +76,7 @@ export default function App() {
     requireAi();const data=await aiRequest({action,...questionContext(),instruction,count});
     if(action==="variant") {
       if(data.questions.length!==count)throw new Error("요청한 문제 수와 응답이 다릅니다. 다시 시도해 주세요.");
-      append(data.questions.map((q:AnswerCandidate&{text:string})=>newQuestion({text:q.text,answer:q.answer,explanation:q.explanation,origin:"variant",answerSource:"ai",sourceName:`변형 기준: ${selected?.label||doc.questions.findIndex(q=>q.id===selectedId)+1}`})));
+      append(data.questions.map((q:AnswerCandidate&{text:string})=>newQuestion({text:q.text,answer:q.answer,explanation:q.explanation,origin:"variant",answerSource:"ai",sourceId:selected?.sourceId,sourcePage:selected?.sourcePage??0,sourceBox:selected?.sourceBox,sourceName:`변형 기준: ${selected?.label||doc.questions.findIndex(q=>q.id===selectedId)+1}`})));
     } else {
       const result=data.questions[0];if(!result?.answer)throw new Error(data.message||"정답을 확정할 수 없습니다. 원본 정보와 그림을 확인해 주세요.");
       patchQuestion({answer:result.answer,explanation:result.explanation,answerSource:"ai",reviewed:false});
@@ -76,12 +88,11 @@ export default function App() {
     const input=chatInput.trim();const data=await aiRequest({action:"chat",...questionContext(),instruction:input,history:messages.slice(-8)});
     setChats(old=>({...old,[selectedId]:[...messages,{role:"user",text:input},{role:"assistant",text:data.message}]}));setChatInput("");
   });
-  const exportFile=(kind:OutputKind,format:"pdf"|"docx",view=false)=>run("파일 만드는 중",async()=>{
+  const exportFile=(kind:OutputKind,format:"pdf"|"docx")=>run("파일 만드는 중",async()=>{
     const {makePdf,makeWord,downloadBlob,safeFilename,outputLabels}=await import("./export");
     const blob=await(format==="pdf"?makePdf(doc,kind):makeWord(doc,kind));
-    if(view){if(previewRef.current)URL.revokeObjectURL(previewRef.current);previewRef.current=URL.createObjectURL(blob);setPreview(previewRef.current);}
-    else downloadBlob(blob,`${safeFilename(doc.title)}_${outputLabels[kind]}.${format}`);
-    setMessage(view?"실제 PDF 출력 미리보기입니다.":"파일을 만들었습니다. 다운로드 목록을 확인해 주세요.");
+    downloadBlob(blob,`${safeFilename(doc.title)}_${outputLabels[kind]}.${format}`);
+    setMessage("파일을 만들었습니다. 다운로드 목록을 확인해 주세요.");
   });
   const loadSaved=(id:string)=>run("학습지 불러오는 중",async()=>{
     if(dirty.current&&!confirm("현재 편집 내용을 바꿀까요? 저장하지 않은 내용은 사라집니다."))return;
@@ -93,7 +104,7 @@ export default function App() {
     <main>
       <section className="intro"><div><span className="eyebrow">YOUR QUESTIONS. YOUR FORMAT.</span><h1>문제는 그대로, 학습지는 새롭게.</h1><p>텍스트와 그림을 꺼내고, 나만의 양식으로 완성하세요.</p></div><div className="format-pill"><b>A4</b><span>세로 · 2단 양식<br/>한 페이지 최대 2문제</span></div></section>
       {!session&&<details className="login-box"><summary>Moonwords 계정 연결 <span>AI 기능 · 저장 본문 · 클라우드 학습지</span></summary>{supabase?<form onSubmit={e=>{e.preventDefault();void run("로그인 중",async()=>{const {error}=await supabase!.auth.signInWithPassword({email,password});if(error)throw error;setPassword("");});}}><input type="email" aria-label="이메일" placeholder="Moonwords 이메일" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)}/><input type="password" aria-label="비밀번호" placeholder="비밀번호" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/><button className="primary" disabled={!!busy}>로그인</button><a href={moonwordsUrl}>계정 만들기 ↗</a></form>:<p>환경 변수 설정 전에도 직접 편집·그림 자르기·6종 다운로드를 사용할 수 있습니다. AI와 클라우드는 Supabase 설정 후 열립니다.</p>}</details>}
-      <section className="title-bar"><label>학습지 상단 제목<input value={doc.title} maxLength={100} disabled={!!busy} placeholder="예: 2학년 2학기 중간고사 대비" onChange={e=>update({...doc,title:e.target.value})}/></label><label className="font-field">본문 크기<select value={doc.fontSize} disabled={!!busy} onChange={e=>update({...doc,fontSize:Number(e.target.value)})}>{[9,10,11,12,13,14,15].map(n=><option key={n} value={n}>{n} pt</option>)}</select></label><button disabled={!!busy} onClick={()=>{if(dirty.current&&!confirm("저장하지 않은 편집을 비우고 새 학습지를 만들까요?"))return;update(emptyWorksheet());setSelectedId("");setCloudId(undefined);setChats({});setAnswers([]);setSource([]);setProcessed([]);dirty.current=false;}}>새 학습지</button></section>
+      <section className="title-bar"><label>학습지 상단 제목<input value={doc.title} maxLength={100} disabled={!!busy} placeholder="예: 2학년 2학기 중간고사 대비" onChange={e=>update({...doc,title:e.target.value})}/></label><label className="font-field">본문 크기<select value={doc.fontSize} disabled={!!busy} onChange={e=>update({...doc,fontSize:Number(e.target.value)})}>{[9,10,11,12,13,14,15].map(n=><option key={n} value={n}>{n} pt</option>)}</select></label><button disabled={!!busy} onClick={()=>{if(dirty.current&&!confirm("저장하지 않은 편집을 비우고 새 학습지를 만들까요?"))return;update(emptyWorksheet());setSelectedId("");setCloudId(undefined);setChats({});setAnswers([]);setSource([]);setSourceArchive([]);setProcessed([]);dirty.current=false;}}>새 학습지</button></section>
       <div className="feedback" aria-live="polite">{busy&&<span className="working"><i/>{busy}</span>}{error&&<p role="alert" className="error">{error}</p>}{message&&<p className="success">{message}</p>}</div>
       <fieldset disabled={!!busy} className="workspace">
         <section className="panel source-panel"><div className="panel-heading"><span className="step">01</span><div><h2>원본 가져오기</h2><p>학습지와 답지를 따로 읽을 수 있어요</p></div></div>
@@ -102,24 +113,24 @@ export default function App() {
           <label className="consent"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>AI 사용 시 선택한 원본 이미지·문제·최근 대화를 Gemini에 전송하는 데 동의합니다.</span></label>
           {page&&<><div className="row page-picker"><button disabled={pageIndex===0} onClick={()=>setPageIndex(n=>n-1)}>←</button><select aria-label="원본 페이지" value={pageIndex} onChange={e=>setPageIndex(Number(e.target.value))}>{source.map((p,i)=><option key={i} value={i}>{i+1} / {source.length}페이지 {processed.includes(i)?"· 추출 완료":""}</option>)}</select><button disabled={pageIndex===source.length-1} onClick={()=>setPageIndex(n=>n+1)}>→</button></div>
             <button className="primary wide" disabled={!session||!consent||processed.includes(pageIndex)} onClick={()=>void extractPage()}>{sourceRole==="answers"?"이 페이지 답안 추출":"이 페이지 문제·그림 추출"}</button><p className="hint">한 페이지씩 처리합니다. 스캔본은 이미지로 읽으며, 판독이 어려운 부분은 검토 표시합니다.</p>
-            <details><summary>추출 전 원문 텍스트 보기</summary><textarea aria-label="원문 텍스트" rows={7} value={page.text} onChange={e=>setSource(old=>old.map((p,i)=>i===pageIndex?{...p,text:e.target.value}:p))}/><button onClick={()=>{append([newQuestion({text:page.text,sourceName:page.name,sourcePage:page.number})]);}}>텍스트를 한 문제로 추가</button></details>
-            {page.image&&<Cropper key={`${page.name}-${page.number}`} page={page} disabled={!!busy} onCrop={dataUrl=>{const figure={id:crypto.randomUUID(),dataUrl,caption:""};if(selected){if(selected.figures.length>=8){setError("문제당 그림은 8개까지입니다.");return;}patchQuestion({figures:[...selected.figures,figure]});}else append([newQuestion({figures:[figure],sourceName:page.name,sourcePage:page.number})]);}}/>}
+            <details><summary>추출 전 원문 텍스트 보기</summary><textarea aria-label="원문 텍스트" rows={7} value={page.text} onChange={e=>setSource(old=>old.map((p,i)=>i===pageIndex?{...p,text:e.target.value}:p))}/><button onClick={()=>{append([newQuestion({text:page.text,sourceName:page.name,sourcePage:page.number,sourceId:page.id})]);}}>텍스트를 한 문제로 추가</button></details>
+            {page.image&&<Cropper key={`${page.name}-${page.number}`} page={page} disabled={!!busy} onCrop={(dataUrl,box)=>{const figure={id:crypto.randomUUID(),dataUrl,caption:"",sourceId:page.id,sourceName:page.name,sourcePage:page.number,sourceBox:box};if(selected){if(selected.figures.length>=8){setError("문제당 그림은 8개까지입니다.");return;}patchQuestion({figures:[...selected.figures,figure],reviewed:false});}else append([newQuestion({figures:[figure],sourceName:page.name,sourcePage:page.number,sourceId:page.id})]);}}/>}
           </>}
           {answers.length>0&&<div className="answer-import"><h3>답안 연결</h3><select aria-label="추출 답안" value={answerIndex} onChange={e=>setAnswerIndex(Number(e.target.value))}>{answers.map((a,i)=><option key={i} value={i}>원본 {a.label||i+1}번</option>)}</select><p>{answers[answerIndex]?.answer}</p><small>{answers[answerIndex]?.explanation}</small><button disabled={!selected} onClick={()=>{const a=answers[answerIndex];if(!a)return;if(selected?.answer&&!confirm("선택 문제의 기존 답안을 바꿀까요?"))return;patchQuestion({answer:a.answer,explanation:a.explanation,answerSource:"source",reviewed:false});setMessage(`선택 문제에 원본 ${a.label}번 답안을 연결했습니다. 번호를 확인해 주세요.`);}}>현재 선택 문제에 적용</button></div>}
         </section>
         <section className="panel editor-panel"><div className="panel-heading"><span className="step">02</span><div><h2>문제 편집</h2><p>원문·그림·정답을 확인하세요</p></div><span className="count">{doc.questions.length}문제</span></div>
           <div className="question-strip">{doc.questions.map((q,i)=><button key={q.id} className={selectedId===q.id?"selected":""} onClick={()=>setSelectedId(q.id)} title={q.text.slice(0,70)}>문제 {i+1}<small>{originLabels[q.origin]}</small></button>)}<button className="add-question" onClick={()=>append([newQuestion()])} disabled={doc.questions.length>=100}>＋ 문제 추가</button></div>
           {selected?<div className="question-editor"><div className="row between"><span className="tag">{originLabels[selected.origin]} {selected.label&&`· 원본 ${selected.label}번`}</span><div className="row"><button aria-label="문제 앞으로" disabled={doc.questions[0].id===selected.id} onClick={()=>{const qs=[...doc.questions];const i=qs.findIndex(q=>q.id===selected.id);[qs[i-1],qs[i]]=[qs[i],qs[i-1]];update({...doc,questions:qs});}}>←</button><button aria-label="문제 뒤로" disabled={doc.questions.at(-1)?.id===selected.id} onClick={()=>{const qs=[...doc.questions];const i=qs.findIndex(q=>q.id===selected.id);[qs[i+1],qs[i]]=[qs[i],qs[i+1]];update({...doc,questions:qs});}}>→</button><button className="danger" onClick={()=>{if(!confirm("이 문제를 학습지에서 뺄까요?"))return;const qs=doc.questions.filter(q=>q.id!==selected.id);update({...doc,questions:qs});setSelectedId(qs[0]?.id||"");}}>삭제</button></div></div>
-            {selected.sourceName&&<p className="hint">출처: {selected.sourceName}{selected.sourcePage>0?` · ${selected.sourcePage}페이지`:""}</p>}
+            {selected.sourceName&&<p className="hint">출처: {selected.sourceName}{selected.sourcePage>0?` · ${selected.sourcePage}페이지`:""} <button type="button" onClick={()=>openReview(selected.id,null,true)}>원본에서 확인</button></p>}
             <label>문제와 보기<textarea aria-label="문제와 보기" rows={12} maxLength={30000} value={selected.text} onChange={e=>patchQuestion({text:e.target.value,reviewed:false})} placeholder="지문, 질문과 보기를 입력하세요. 복잡한 수식은 원본 그림으로 넣을 수 있습니다."/></label>
-            <div className="figures">{selected.figures.map(fig=><div key={fig.id}><img src={fig.dataUrl} alt={fig.caption||"문제 그림"}/><input aria-label="그림 설명" maxLength={300} placeholder="그림 설명 (선택)" value={fig.caption} onChange={e=>patchQuestion({figures:selected.figures.map(f=>f.id===fig.id?{...f,caption:e.target.value}:f)})}/><button onClick={()=>patchQuestion({figures:selected.figures.filter(f=>f.id!==fig.id),reviewed:false})}>그림 빼기</button></div>)}</div>
+            <div className="figures">{selected.figures.map(fig=><div key={fig.id}><button type="button" className="editor-figure-button" aria-label="이 그림 원본에서 편집" onClick={()=>openReview(selected.id,fig.id,true)}><img src={fig.dataUrl} alt={fig.caption||"문제 그림"}/></button><input aria-label="그림 설명" maxLength={300} placeholder="그림 설명 (선택)" value={fig.caption} onChange={e=>patchQuestion({figures:selected.figures.map(f=>f.id===fig.id?{...f,caption:e.target.value}:f)})}/><button onClick={()=>patchQuestion({figures:selected.figures.filter(f=>f.id!==fig.id),reviewed:false})}>그림 빼기</button></div>)}</div>
             <details className="answers-editor" open><summary>정답 및 해설 <span className="tag">{answerLabels[selected.answerSource]}</span></summary><label>정답<input aria-label="정답" maxLength={30000} value={selected.answer} onChange={e=>patchQuestion({answer:e.target.value,answerSource:"manual",reviewed:false})}/></label><label>해설<textarea aria-label="해설" rows={5} maxLength={30000} value={selected.explanation} onChange={e=>patchQuestion({explanation:e.target.value,reviewed:false})}/></label><label className="consent"><input type="checkbox" checked={selected.reviewed} onChange={e=>patchQuestion({reviewed:e.target.checked})}/><span>원문·그림·정답을 직접 검토했습니다.</span></label></details>
           </div>:<div className="empty-state"><span>▤</span><h3>첫 문제를 넣어 보세요</h3><p>왼쪽에서 원본을 추출하거나<br/>‘문제 추가’로 직접 시작할 수 있어요.</p><button onClick={()=>append([newQuestion({text:"다음 글의 중심 내용을 설명하시오.\n\nLearning is not simply remembering facts. It is connecting new ideas with what we already know.",answer:"학습은 새로운 생각을 기존 지식과 연결하는 과정이다.",explanation:"두 번째 문장에서 학습의 의미를 설명합니다.",origin:"manual",answerSource:"manual",reviewed:true})])}>예시 문제로 살펴보기</button></div>}
         </section>
         <aside className="panel tools-panel"><div className="tool-tabs"><button className={panel==="export"?"active":""} onClick={()=>setPanel("export")}>다운로드</button><button className={panel==="ai"?"active":""} onClick={()=>setPanel("ai")}>변형·토의</button><button className={panel==="cloud"?"active":""} onClick={()=>setPanel("cloud")}>저장·연동</button></div>
           {panel==="export"&&<><span className="eyebrow">READY TO PRINT</span><h2>나만의 학습지 완성</h2><div className="mini-sheet"><header><b>1</b><span>{doc.title||"입력한 제목"}</span></header><div><article>[문제 1]<p>{doc.questions[0]?.text.slice(0,100)||"첫 번째 문제"}</p></article><article>[문제 2]<p>{doc.questions[1]?.text.slice(0,100)||"두 번째 문제"}</p></article></div></div><p className="hint">A4 · 최대 2문제/페이지 · 홀수면 오른쪽 빈칸<br/>긴 문제는 ‘계속’ 표시로 이어집니다.</p>
             <div className="downloads">{(["questions","answers","combined"] as OutputKind[]).map((kind,i)=><div key={kind}><b>{["문제만","답지만","문제 뒤에 답지"][i]}</b><button disabled={!doc.questions.length} onClick={()=>void exportFile(kind,"docx")}>Word ↓</button><button disabled={!doc.questions.length} onClick={()=>void exportFile(kind,"pdf")}>PDF ↓</button></div>)}</div>
-            <button className="primary wide" disabled={!doc.questions.length} onClick={()=>void exportFile("combined","pdf",true)}>실제 합본 PDF 미리보기</button><p className="hint">Word는 편집 가능한 텍스트와 그림으로 저장됩니다. Word용 한글 글꼴은 아래에서 받을 수 있어요.</p><a href="./fonts/NanumGothic-Regular.ttf" download>나눔고딕 글꼴 받기</a>
+            <button className="primary wide review-start-button" disabled={!doc.questions.length} onClick={()=>openReview()}>최종본 확인 · 그림 수정</button><p className="hint">실제 합본 PDF에서 문제를 누르면 원본으로, 그림을 누르면 사진 편집으로 이동합니다.</p><p className="hint">Word는 편집 가능한 텍스트와 그림으로 저장됩니다. Word용 한글 글꼴은 아래에서 받을 수 있어요.</p><a href="./fonts/NanumGothic-Regular.ttf" download>나눔고딕 글꼴 받기</a>
             {doc.questions.some(q=>!q.reviewed)&&<p className="warning">미검토 문제가 있습니다. 미검토 답안에는 ‘검토 필요’가 표시됩니다. AI 정답은 실제 답지와 다를 수 있습니다.</p>}
           </>}
           {panel==="ai"&&<><span className="eyebrow">THINK & REMIX</span><h2>문제의 다음 가능성</h2><p className="hint">현재 선택한 문제와 그림(최대 4개)을 기준으로 작동합니다. 실제 시험 출제를 보장하지 않습니다.</p><label>선생님이 알려준 출제 방향<textarea aria-label="출제 방향" rows={4} maxLength={2000} value={instruction} onChange={e=>setInstruction(e.target.value)} placeholder="예: 이 개념을 조건을 바꾼 서술형으로 내신대요. 풀이 과정을 묻는 문제로 바꿔 줘."/></label><div className="row"><select aria-label="변형 문제 수" value={count} onChange={e=>setCount(Number(e.target.value))}>{Array.from({length:10},(_,i)=><option key={i} value={i+1}>{i+1}문제</option>)}</select><button className="primary" disabled={!selected||!session||!consent} onClick={()=>void generate("variant")}>변형 문제 추가</button></div><button className="wide" disabled={!selected||!session||!consent} onClick={()=>{if(selected?.answer&&!confirm("기존 답안을 AI 초안으로 바꿀까요?"))return;void generate("solve");}}>정답·해설 AI 초안 만들기</button><p className="hint">변형은 새 문제로 추가됩니다. 원본은 유지하며, 바뀐 조건과 맞지 않을 수 있는 원본 그림은 자동 복사하지 않습니다.</p>
@@ -136,6 +147,6 @@ export default function App() {
       </fieldset>
       <footer className="footer"><div className="footer-brand"><b>Printmaker</b><small>MOON · WORKSHEET</small></div><span>MoonWords와 같은 학습 도구 모음</span><span>사용 권한이 있는 자료만 올려 주세요. AI 추출·답안은 검토가 필요합니다.</span></footer>
     </main>
-    {preview&&<div className="preview-overlay" role="dialog" aria-modal="true" aria-label="합본 PDF 미리보기"><div className="row between"><b>합본 PDF 미리보기</b><button autoFocus onClick={()=>{URL.revokeObjectURL(previewRef.current);previewRef.current="";setPreview("");}}>닫기 ×</button></div><iframe src={preview} title="학습지 PDF"/></div>}
+    {review.target&&<Suspense fallback={<div className="worksheet-review" role="status">최종본 편집기를 여는 중…</div>}><WorksheetReview doc={doc} sources={sourceArchive} initialQuestionId={review.target.questionId} initialFigureId={review.target.figureId} initialPane={review.target.source?"source":"preview"} busy={!!busy} loadError={error} onChange={update} onSelectQuestion={setSelectedId} onLoadSource={file=>void loadFile(file)} onClose={review.close}/></Suspense>}
   </div>;
 }

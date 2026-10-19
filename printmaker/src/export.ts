@@ -4,7 +4,8 @@ import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 
 export type OutputKind = "questions" | "answers" | "combined";
-type Block = {type:"line"; text:string} | {type:"image"; data:string; width:number; height:number};
+type Block = {type:"line"; text:string} | {type:"image"; data:string; width:number; height:number; figureId?:string};
+export type PreviewRegion = { page: number; questionId: string; questionNumber: number; figureId?: string; box: [number,number,number,number]; answer: boolean };
 export type Slot = {number:number; continued:boolean; blocks:Block[]};
 export type SheetPage = {answer:boolean; slots:Slot[]};
 const WIDTH=236, BODY_HEIGHT=526;
@@ -56,7 +57,7 @@ export async function prepareLayout(doc:Worksheet, kind:OutputKind) {
         const scale=Math.min(WIDTH/img.naturalWidth,270/img.naturalHeight,1);
         // Normalize WEBP to PNG for both PDF and Word compatibility.
         const canvas=document.createElement("canvas");canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;canvas.getContext("2d")!.drawImage(img,0,0);
-        blocks.push({type:"image",data:canvas.toDataURL("image/png"),width:img.naturalWidth*scale,height:img.naturalHeight*scale});
+        blocks.push({type:"image",data:canvas.toDataURL("image/png"),width:img.naturalWidth*scale,height:img.naturalHeight*scale,figureId:fig.id});
         if(fig.caption) {check(fig.caption);blocks.push(...wrapText(fig.caption,s=>font.widthOfTextAtSize(s,doc.fontSize),WIDTH).map(text=>({type:"line" as const,text})));}
       }
       let slot:Slot={number:index+1,continued:false,blocks:[]};let used=0;
@@ -72,8 +73,9 @@ export async function prepareLayout(doc:Worksheet, kind:OutputKind) {
   if(pages.length>300) throw new Error("300페이지를 넘습니다. 학습지를 나눠 주세요.");
   return {pdf,font,pages};
 }
-export async function makePdf(doc:Worksheet,kind:OutputKind):Promise<Blob> {
+export async function makePdfWithRegions(doc:Worksheet,kind:OutputKind):Promise<{blob:Blob;regions:PreviewRegion[]}> {
   const {pdf,font,pages}=await prepareLayout(doc,kind);
+  const regions:PreviewRegion[]=[];
   pdf.setTitle(`${doc.title} ${outputLabels[kind]}`);pdf.setCreator("Printmaker");
   for(const [index,sheet] of pages.entries()) {
     const page=pdf.addPage([595.28,841.89]);
@@ -86,16 +88,21 @@ export async function makePdf(doc:Worksheet,kind:OutputKind):Promise<Blob> {
     page.drawLine({start:{x:297.64,y:756},end:{x:297.64,y:163},thickness:1,color:rgb(0,0,0)});
     for(const [column,slot] of sheet.slots.entries()) {
       const x=column?309:35;
+      const questionId=doc.questions[slot.number-1].id;
+      regions.push({page:index,questionId,questionNumber:slot.number,answer:sheet.answer,box:[88/841.89*1000,(x-5)/595.28*1000,690/841.89*1000,(x+WIDTH+5)/595.28*1000]});
       page.drawText(`[${sheet.answer?"정답":"문제"} ${slot.number}]${slot.continued?" (계속)":""}`,{x,y:744,font,size:13});
       let y=716;
       for(const block of slot.blocks) {
         if(block.type==="line") {if(block.text)page.drawText(block.text,{x,y,font,size:doc.fontSize});y-=doc.fontSize*1.6;}
-        else {const image=await pdf.embedPng(block.data);page.drawImage(image,{x,y:y-block.height,width:block.width,height:block.height});y-=block.height+10;}
+        else {const image=await pdf.embedPng(block.data);page.drawImage(image,{x,y:y-block.height,width:block.width,height:block.height});
+          if(block.figureId)regions.push({page:index,questionId,questionNumber:slot.number,figureId:block.figureId,answer:sheet.answer,box:[(841.89-y)/841.89*1000,x/595.28*1000,(841.89-y+block.height)/841.89*1000,(x+block.width)/595.28*1000]});
+          y-=block.height+10;}
       }
     }
   }
-  const bytes=await pdf.save();return new Blob([new Uint8Array(bytes)],{type:"application/pdf"});
+  const bytes=await pdf.save();return {blob:new Blob([new Uint8Array(bytes)],{type:"application/pdf"}),regions};
 }
+export async function makePdf(doc:Worksheet,kind:OutputKind):Promise<Blob> { return (await makePdfWithRegions(doc,kind)).blob; }
 export async function makeWord(doc:Worksheet,kind:OutputKind):Promise<Blob> {
   const {pages}=await prepareLayout(doc,kind);
   const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,WidthType,BorderStyle,HeightRule,ImageRun,LineRuleType,TableLayoutType}=await import("docx");

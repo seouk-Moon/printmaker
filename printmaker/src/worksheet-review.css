@@ -1,0 +1,63 @@
+.worksheet-review { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; padding: max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom)); color: #27302a; background: #f5f7f2; }
+.review-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 2px; }
+.review-header h2 { margin: 5px 0 0; font-size: 17px; letter-spacing: -.04em; }
+.review-header .eyebrow { font-size: 9px; }
+.worksheet-review button, .worksheet-review select, .worksheet-review input, .worksheet-review a { min-height: 44px; }
+.review-close { padding: 8px 12px; font-size: 11px; white-space: nowrap; }
+.review-intro { margin: 6px 2px 12px; color: #6b7768; font-size: 11px; line-height: 1.7; }
+.review-mobile-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+.review-mobile-tabs button { font-size: 12px; }
+.review-mobile-tabs button[aria-pressed=true] { color: #fff; background: #43583c; border-color: #43583c; }
+.review-columns { flex: 1; min-height: 0; overflow: auto; }
+.review-columns[data-pane=preview] .review-source, .review-columns[data-pane=source] .review-output { display: none; }
+.review-output, .review-source { min-width: 0; }
+.review-output-toolbar { position: sticky; top: 0; z-index: 4; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px; border-radius: 12px; background: #fff; border: 1px solid #dde4d7; margin-bottom: 10px; }
+.review-output-toolbar label { display: flex; align-items: center; gap: 8px; flex: 1; font-size: 11px; }
+.review-output-toolbar select { width: auto; min-width: 85px; }
+.review-output-toolbar a { display: inline-flex; align-items: center; padding: 8px; font-size: 11px; }
+.review-pdf-page { position: relative; width: 100%; aspect-ratio: 595.28 / 841.89; background: white; box-shadow: 0 6px 20px #26342610; }
+.review-pdf-page canvas { display: block; width: 100%; height: auto; }
+.worksheet-review .review-hitbox { position: absolute; min-height: 0; padding: 0; background: transparent; border: 2px solid transparent; border-radius: 3px; cursor: pointer; }
+.review-hitbox.question-hitbox { z-index: 1; }
+.review-hitbox.figure-hitbox { z-index: 2; }
+.review-hitbox span { position: absolute; left: 0; top: 0; padding: 4px 6px; border-radius: 0 0 6px; background: #375a3b; color: white; font-size: 10px; opacity: 0; pointer-events: none; white-space: nowrap; }
+.review-hitbox:hover, .review-hitbox:focus-visible, .review-hitbox[aria-pressed=true] { border-color: #74966a; outline: none; }
+.review-hitbox:hover span, .review-hitbox:focus-visible span { opacity: 1; }
+.review-hitbox.figure-hitbox:hover, .review-hitbox.figure-hitbox[aria-pressed=true] { border-color: #4b82b4; background: #76a9d510; }
+.review-source { padding: 14px; border: 1px solid #dde4d7; border-radius: 14px; background: #fff; }
+.review-question-picker, .review-source-picker { display: grid; gap: 7px; margin-bottom: 14px; font-size: 12px; font-weight: 700; }
+.review-source select { width: 100%; min-width: 0; }
+.review-figure-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.review-figure-list button { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; font-size: 11px; }
+.review-figure-list button[aria-pressed=true] { border-color: #5f7c53; background: #edf3e8; color: #3e5936; }
+.review-figure-list img { width: 34px; height: 30px; object-fit: contain; }
+.review-edit-target { padding: 12px; border-radius: 10px; background: #f0f5ec; margin-bottom: 14px; }
+.review-edit-target b { font-size: 13px; }
+.review-edit-target p { margin: 5px 0 0; line-height: 1.7; font-size: 11px; color: #68785f; }
+.review-source-missing { padding: 11px; background: #fff5df; border-radius: 10px; font-size: 11px; line-height: 1.8; color: #826b3a; }
+.review-source-caption { overflow-wrap: anywhere; font-size: 11px; font-weight: 700; line-height: 1.6; margin: 12px 0; }
+.worksheet-review .crop-stage { max-height: none; height: auto; touch-action: none; }
+.worksheet-review .crop-stage img, .cropper .crop-stage img { width: 100%; height: auto; max-height: none; object-fit: contain; }
+.crop-numeric > div { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 7px; margin: 8px 0; }
+.crop-numeric label { display: grid; gap: 5px; font-size: 10px; }
+.crop-numeric input { width: 100%; min-width: 0; padding: 6px; }
+.crop-commands { flex-wrap: wrap; margin: 12px 0; }
+.crop-commands > button { flex: 1; min-height: 44px; }
+.crop-apply { margin: 12px 0; min-height: 48px; }
+.review-load-source { width: 100%; margin-top: 10px; }
+.review-loading { padding: 50px 20px; text-align: center; color: #697b62; font-size: 13px; }
+.review-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; margin-top: 10px; background: #e9f2e2; border-radius: 10px; font-size: 11px; line-height: 1.6; }
+.review-result button { font-size: 10px; white-space: nowrap; }
+.review-start-button { min-height: 48px; margin: 14px 0; }
+.editor-figure-button { padding: 0; border: 2px solid transparent; border-radius: 9px; background: transparent; width: 100%; cursor: pointer; }
+.editor-figure-button:focus-visible, .editor-figure-button:hover { border-color: #7d9d72; }
+@media(min-width:1000px) {
+  .worksheet-review { inset: 18px; border: 1px solid #ccd8c5; border-radius: 18px; padding: 18px; box-shadow: 0 0 0 100vmax #182519aa; }
+  .review-header h2 { font-size: 22px; }
+  .review-mobile-tabs { display: none; }
+  .review-columns { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(340px,.85fr); gap: 20px; overflow: hidden; }
+  .review-columns .review-source, .review-columns .review-output { display: block !important; overflow: auto; min-height: 0; }
+  .review-source { padding: 18px; }
+  .review-output { padding-right: 8px; }
+}
+@media(prefers-reduced-motion:reduce) { .worksheet-review * { scroll-behavior: auto !important; } }
