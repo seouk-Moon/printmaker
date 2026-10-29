@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { aiRequest, moonwordsUrl, saveCloud, sendToMoonwords, supabase } from "./cloud";
+import { aiRequest, saveCloud, sendToMoonwords, supabase } from "./cloud";
 import { emptyWorksheet, moonwordsQuestions, newQuestion, parseWorksheet, isSourceBox } from "./model";
 import type { Figure, Message, Question, SourcePage, Worksheet } from "./model";
 import { Cropper } from "./Cropper";
@@ -23,7 +23,7 @@ export default function App() {
   const [busy,setBusy]=useState("");const [message,setMessage]=useState("");const [error,setError]=useState("");
   const [consent,setConsent]=useState(false);const [sourceRole,setSourceRole]=useState<"extract"|"answers">("extract");
   const [answers,setAnswers]=useState<AnswerCandidate[]>([]);const [answerIndex,setAnswerIndex]=useState(0);
-  const [session,setSession]=useState<Session|null>(null);const [email,setEmail]=useState("");const [password,setPassword]=useState("");
+  const [session,setSession]=useState<Session|null>(null);
   const [panel,setPanel]=useState<"export"|"ai"|"cloud">("export");
   const [instruction,setInstruction]=useState("");const [count,setCount]=useState(2);
   const [chatInput,setChatInput]=useState("");const [chats,setChats]=useState<Record<string,Message[]>>({});
@@ -43,7 +43,7 @@ export default function App() {
     update(old=>({...old,questions:[...old.questions,...questions]}));if(questions[0])setSelectedId(questions[0].id);
   };
   const run=async(label:string,fn:()=>Promise<void>)=>{if(busy)return;setBusy(label);setError("");setMessage("");try{await fn();}catch(e){setError(e instanceof Error?e.message:"처리 중 오류가 발생했습니다.");}finally{setBusy("");}};
-  const requireAi=()=>{if(!consent)throw new Error("AI 전송 동의에 체크해 주세요. 선택한 원본과 문제만 전송합니다.");if(!session)throw new Error("상단에서 Moonwords 계정으로 로그인해 주세요.");};
+  const requireAi=()=>{if(!consent)throw new Error("AI 전송 동의에 체크해 주세요. 선택한 원본과 문제만 전송합니다.");if(!session)throw new Error("MOONS 통합 계정으로 로그인해 주세요.");};
   const loadFile=(file:File)=>run("파일 읽는 중",async()=>{
     const {readSource}=await import("./extract");const raw=await readSource(file,setBusy);
     const digest=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());
@@ -100,10 +100,10 @@ export default function App() {
     const next=parseWorksheet(data.payload);update(next);setCloudId(id);setSelectedId(next.questions[0]?.id||"");setChats({});dirty.current=false;
   });
   return <div className="app">
-    <header className="topbar"><a className="brand" href="./index.html"><span className="brand-icon">P</span>printmaker<span className="brand-tag">WORKSHEET STUDIO</span></a><nav><a href={moonwordsUrl}>Moonwords ↗</a><a href="./templates/worksheet-reference.pdf" target="_blank" rel="noreferrer">기본 양식</a></nav><span className="account">{session?session.user.email:"로컬 편집 모드"}</span>{session&&<button disabled={!!busy} onClick={()=>run("로그아웃 중",async()=>{await supabase?.auth.signOut({scope:"local"});})}>로그아웃</button>}</header>
+    <header className="topbar"><a className="brand" href="https://seouk-moon.github.io/" aria-label="MOONS 홈"><span className="brand-icon">P</span>printmaker<span className="brand-tag">WORKSHEET STUDIO</span></a><nav><a href="./templates/worksheet-reference.pdf" target="_blank" rel="noreferrer">기본 양식</a></nav><span className="account">{session?session.user.email:"로컬 편집 모드"}</span>{session&&<button disabled={!!busy} onClick={()=>run("로그아웃 중",async()=>{await supabase?.auth.signOut({scope:"local"});})}>로그아웃</button>}</header>
     <main>
       <section className="intro"><div><span className="eyebrow">YOUR QUESTIONS. YOUR FORMAT.</span><h1>문제는 그대로, 학습지는 새롭게.</h1><p>텍스트와 그림을 꺼내고, 나만의 양식으로 완성하세요.</p></div><div className="format-pill"><b>A4</b><span>세로 · 2단 양식<br/>한 페이지 최대 2문제</span></div></section>
-      {!session&&<details className="login-box"><summary>Moonwords 계정 연결 <span>AI 기능 · 저장 본문 · 클라우드 학습지</span></summary>{supabase?<form onSubmit={e=>{e.preventDefault();void run("로그인 중",async()=>{const {error}=await supabase!.auth.signInWithPassword({email,password});if(error)throw error;setPassword("");});}}><input type="email" aria-label="이메일" placeholder="Moonwords 이메일" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)}/><input type="password" aria-label="비밀번호" placeholder="비밀번호" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)}/><button className="primary" disabled={!!busy}>로그인</button><a href={moonwordsUrl}>계정 만들기 ↗</a></form>:<p>환경 변수 설정 전에도 직접 편집·그림 자르기·6종 다운로드를 사용할 수 있습니다. AI와 클라우드는 Supabase 설정 후 열립니다.</p>}</details>}
+      {!session&&<section className="login-box"><p>AI 기능과 저장 자료는 MOONS 통합 계정으로 이용하세요.</p><a href="/account.html?return=%2Fprintmaker%2F">통합 로그인 · 가입</a></section>}
       <section className="title-bar"><label>학습지 상단 제목<input value={doc.title} maxLength={100} disabled={!!busy} placeholder="예: 2학년 2학기 중간고사 대비" onChange={e=>update({...doc,title:e.target.value})}/></label><label className="font-field">본문 크기<select value={doc.fontSize} disabled={!!busy} onChange={e=>update({...doc,fontSize:Number(e.target.value)})}>{[9,10,11,12,13,14,15].map(n=><option key={n} value={n}>{n} pt</option>)}</select></label><button disabled={!!busy} onClick={()=>{if(dirty.current&&!confirm("저장하지 않은 편집을 비우고 새 학습지를 만들까요?"))return;update(emptyWorksheet());setSelectedId("");setCloudId(undefined);setChats({});setAnswers([]);setSource([]);setSourceArchive([]);setProcessed([]);dirty.current=false;}}>새 학습지</button></section>
       <div className="feedback" aria-live="polite">{busy&&<span className="working"><i/>{busy}</span>}{error&&<p role="alert" className="error">{error}</p>}{message&&<p className="success">{message}</p>}</div>
       <fieldset disabled={!!busy} className="workspace">
